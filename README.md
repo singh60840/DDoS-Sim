@@ -24,19 +24,19 @@ This  DDoS (Distributed Denial of Service) attack simulation framework is design
 
 ## Installation
 
-1. Clone this repository: 
-```git clone https://github.com/singh60840/DDoS-Sim.git 
-cd ddos-simulation-framework
-```
+1. Clone this repository:
+git clone https://github.com/vksssd/ddos-simulation-framework.git cd ddos-simulation-framework
 
-2. Install the required packages
+
+2. Install the required packages:
 
 
 ## Usage
 
 Run the simulation using the following command:
-
 ```python ddos.py <target_ip> [options]```
+```python ddos.py 192.168.1.100 --target-port 80 --duration 300 --rate 5000 --methods TCP_SYN UDP HTTP_GET --size 128 --num-bots 50```
+
 
 
 ### Options:
@@ -53,6 +53,12 @@ Run the simulation using the following command:
 ### Example:
 
 ```python ddos.py 192.168.1.100 --target-port 80 --duration 300 --rate 5000 --methods TCP_SYN UDP HTTP_GET --size 128 --num-bots 50```
+
+
+### For ddos-lite 
+ ```python ddos-lite.py```
+ 
+ Make sure target port is free for this or change the port in the code.
 
 
 ## Output
