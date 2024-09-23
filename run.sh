@@ -1,6 +1,6 @@
 #!/bin/sh
 
-pip install flask psutil aiohttp
+# pip install flask psutil aiohttp
 
 if sudo lsof -t -i:8080 > /dev/null; then
     echo "Killing process on port 8080..."
@@ -10,3 +10,7 @@ else
 fi
 
 python ddos-lite.py
+
+python extract-data.py
+
+python analysis.py
